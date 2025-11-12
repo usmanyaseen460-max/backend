@@ -9,6 +9,9 @@ const fs = require("fs");
 const app = express();
 const port = process.env.PORT || 4000;
 
+// ===== Backend URL for images (live deployment) =====
+const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${port}`;
+
 // ===== Middleware =====
 app.use(express.json());
 app.use(cors());
@@ -22,7 +25,7 @@ if (!fs.existsSync(uploadDir)) {
 // ===== MongoDB Connection =====
 mongoose
   .connect(
-    "mongodb+srv://webdevwithusman:webdevwithusman@cluster0.cbo8qpt.mongodb.net/e-commerce"
+    process.env.MONGODB_URI || "mongodb+srv://webdevwithusman:webdevwithusman@cluster0.cbo8qpt.mongodb.net/e-commerce"
   )
   .then(() => console.log("✅ MongoDB Connected"))
   .catch((err) => console.log("MongoDB Error:", err));
@@ -106,7 +109,7 @@ app.post("/addproduct", upload.array("images"), async (req, res) => {
 
     const variants = req.files.map((file, i) => ({
       color: colorArr[i],
-      image: `http://localhost:${port}/images/${file.filename}`,
+      image: `${BACKEND_URL}/images/${file.filename}`, // dynamic URL
     }));
 
     const product = new Product({ id, name, description, price, variants });
@@ -183,28 +186,21 @@ app.post("/adminlogout", (req, res) => {
 });
 
 // ===== Order APIs =====
-// ===== Order APIs =====
 app.post("/api/orders", async (req, res) => {
   try {
     const { name, phone, province, city, address, payment, totalAmount, items } = req.body;
 
-    // items me productId aur color hai, product name fetch karte hain
     const enrichedItems = await Promise.all(items.map(async (item) => {
       const product = await Product.findOne({ id: item.productId });
       let productName = product ? product.name : "Unknown Product";
-      
-      // agar color bhi hai, image fetch kar sakte ho (optional)
+
       let image = null;
       if (product && item.color) {
         const variant = product.variants.find(v => v.color === item.color);
         if (variant) image = variant.image;
       }
 
-      return {
-        ...item,
-        productName,
-        image,
-      };
+      return { ...item, productName, image };
     }));
 
     const newOrder = new Order({
@@ -217,11 +213,11 @@ app.post("/api/orders", async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
+
 app.get("/api/orders", async (req, res) => {
   try {
     const orders = await Order.find({}).sort({ date: -1 });
 
-    // Optional: items ke andar productName aur image ensure kar lo
     const enrichedOrders = await Promise.all(orders.map(async (order) => {
       const updatedItems = await Promise.all(order.items.map(async (item) => {
         if (!item.productName) {
@@ -241,7 +237,6 @@ app.get("/api/orders", async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
-
 
 app.delete("/api/orders/:id", async (req, res) => {
   try {
@@ -284,7 +279,6 @@ app.get("/relatedproducts/:id", async (req, res) => {
     const productId = Number(req.params.id);
     const all = await Product.find({});
 
-    // current product ko hata ke baki me se 3 random pick
     const others = all.filter(p => p.id !== productId);
     const random3 = others.sort(() => 0.5 - Math.random()).slice(0, 3);
 
@@ -294,7 +288,6 @@ app.get("/relatedproducts/:id", async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
-
 
 // ===== Start Server =====
 app.listen(port, () => console.log(`🚀 Server Running on Port ${port}`));
