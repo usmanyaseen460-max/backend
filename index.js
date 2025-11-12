@@ -9,8 +9,17 @@ const fs = require("fs");
 const app = express();
 const port = process.env.PORT || 4000;
 
-// ===== Backend URL for images (live deployment) =====
-const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${port}`;
+// ===== Backend URL for images =====
+const BACKEND_URL = process.env.BACKEND_URL || `https://backend-production-1196.up.railway.app`;
+
+// ===== MongoDB URI =====
+const MONGODB_URI =
+  process.env.MONGODB_URI ||
+  "mongodb+srv://webdevwithusman:webdevwithusman@cluster0.cbo8qpt.mongodb.net/e-commerce";
+
+// ===== JWT Secrets =====
+const JWT_USER_SECRET = process.env.JWT_USER_SECRET || "secret_ecom";
+const JWT_ADMIN_SECRET = process.env.JWT_ADMIN_SECRET || "secret_admin";
 
 // ===== Middleware =====
 app.use(express.json());
@@ -24,9 +33,7 @@ if (!fs.existsSync(uploadDir)) {
 
 // ===== MongoDB Connection =====
 mongoose
-  .connect(
-    process.env.MONGODB_URI || "mongodb+srv://webdevwithusman:webdevwithusman@cluster0.cbo8qpt.mongodb.net/e-commerce"
-  )
+  .connect(MONGODB_URI)
   .then(() => console.log("✅ MongoDB Connected"))
   .catch((err) => console.log("MongoDB Error:", err));
 
@@ -44,7 +51,7 @@ const upload = multer({ storage });
 // Serve Images
 app.use("/images", express.static(uploadDir));
 
-// ===== Product Model =====
+// ===== Models =====
 const productSchema = new mongoose.Schema({
   id: Number,
   name: String,
@@ -54,7 +61,6 @@ const productSchema = new mongoose.Schema({
 });
 const Product = mongoose.model("Product", productSchema);
 
-// ===== User Model =====
 const Users = mongoose.model("Users", {
   name: String,
   email: { type: String, unique: true },
@@ -63,14 +69,12 @@ const Users = mongoose.model("Users", {
   date: { type: Date, default: Date.now },
 });
 
-// ===== Admin Model =====
 const Admin = mongoose.model("Admin", {
   username: { type: String, unique: true, required: true },
   password: { type: String, required: true },
   date: { type: Date, default: Date.now },
 });
 
-// ===== Order Model =====
 const orderSchema = new mongoose.Schema({
   name: String,
   phone: String,
@@ -84,7 +88,6 @@ const orderSchema = new mongoose.Schema({
 });
 const Order = mongoose.model("Order", orderSchema);
 
-// ===== Newsletter Model =====
 const newsletterSchema = new mongoose.Schema({
   email: { type: String, unique: true, required: true },
   date: { type: Date, default: Date.now },
@@ -92,8 +95,6 @@ const newsletterSchema = new mongoose.Schema({
 const Newsletter = mongoose.model("Newsletter", newsletterSchema);
 
 // ===== Routes =====
-
-// Home
 app.get("/", (req, res) => {
   res.send("🚀 Express App Running");
 });
@@ -109,7 +110,7 @@ app.post("/addproduct", upload.array("images"), async (req, res) => {
 
     const variants = req.files.map((file, i) => ({
       color: colorArr[i],
-      image: `${BACKEND_URL}/images/${file.filename}`, // dynamic URL
+      image: `${BACKEND_URL}/images/${file.filename}`,
     }));
 
     const product = new Product({ id, name, description, price, variants });
@@ -134,34 +135,41 @@ app.get("/allproducts", async (req, res) => {
 
 // ===== User Auth APIs =====
 app.post("/signup", async (req, res) => {
-  let check = await Users.findOne({ email: req.body.email });
-  if (check)
-    return res.status(400).json({ success: false, errors: "Email already used" });
+  try {
+    let check = await Users.findOne({ email: req.body.email });
+    if (check) return res.status(400).json({ success: false, errors: "Email already used" });
 
-  let cart = {};
-  for (let i = 0; i < 300; i++) cart[i] = 0;
+    let cart = {};
+    for (let i = 0; i < 300; i++) cart[i] = 0;
 
-  const user = new Users({
-    name: req.body.username,
-    email: req.body.email,
-    password: req.body.password,
-    cartData: cart,
-  });
+    const user = new Users({
+      name: req.body.username,
+      email: req.body.email,
+      password: req.body.password,
+      cartData: cart,
+    });
 
-  await user.save();
-  const token = jwt.sign({ id: user._id }, "secret_ecom");
-  res.json({ success: true, token });
+    await user.save();
+    const token = jwt.sign({ id: user._id }, JWT_USER_SECRET);
+    res.json({ success: true, token });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 app.post("/login", async (req, res) => {
-  let user = await Users.findOne({ email: req.body.email });
-  if (!user) return res.json({ success: false, errors: "Invalid Email" });
+  try {
+    let user = await Users.findOne({ email: req.body.email });
+    if (!user) return res.json({ success: false, errors: "Invalid Email" });
 
-  if (user.password !== req.body.password)
-    return res.json({ success: false, errors: "Wrong Password" });
+    if (user.password !== req.body.password)
+      return res.json({ success: false, errors: "Wrong Password" });
 
-  const token = jwt.sign({ id: user._id }, "secret_ecom");
-  res.json({ success: true, token });
+    const token = jwt.sign({ id: user._id }, JWT_USER_SECRET);
+    res.json({ success: true, token });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 // ===== Admin APIs =====
@@ -174,7 +182,7 @@ app.post("/adminlogin", async (req, res) => {
       return res.json({ success: false, message: "Invalid username or password" });
     }
 
-    const token = jwt.sign({ id: admin._id }, "secret_admin", { expiresIn: "2h" });
+    const token = jwt.sign({ id: admin._id }, JWT_ADMIN_SECRET, { expiresIn: "2h" });
     res.json({ success: true, token });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -190,21 +198,30 @@ app.post("/api/orders", async (req, res) => {
   try {
     const { name, phone, province, city, address, payment, totalAmount, items } = req.body;
 
-    const enrichedItems = await Promise.all(items.map(async (item) => {
-      const product = await Product.findOne({ id: item.productId });
-      let productName = product ? product.name : "Unknown Product";
+    const enrichedItems = await Promise.all(
+      items.map(async (item) => {
+        const product = await Product.findOne({ id: item.productId });
+        let productName = product ? product.name : "Unknown Product";
 
-      let image = null;
-      if (product && item.color) {
-        const variant = product.variants.find(v => v.color === item.color);
-        if (variant) image = variant.image;
-      }
+        let image = null;
+        if (product && item.color) {
+          const variant = product.variants.find((v) => v.color === item.color);
+          if (variant) image = variant.image;
+        }
 
-      return { ...item, productName, image };
-    }));
+        return { ...item, productName, image };
+      })
+    );
 
     const newOrder = new Order({
-      name, phone, province, city, address, payment, totalAmount, items: enrichedItems
+      name,
+      phone,
+      province,
+      city,
+      address,
+      payment,
+      totalAmount,
+      items: enrichedItems,
     });
 
     await newOrder.save();
@@ -218,19 +235,23 @@ app.get("/api/orders", async (req, res) => {
   try {
     const orders = await Order.find({}).sort({ date: -1 });
 
-    const enrichedOrders = await Promise.all(orders.map(async (order) => {
-      const updatedItems = await Promise.all(order.items.map(async (item) => {
-        if (!item.productName) {
-          const product = await Product.findOne({ id: item.productId });
-          return {
-            ...item,
-            productName: product ? product.name : "Unknown Product"
-          };
-        }
-        return item;
-      }));
-      return { ...order.toObject(), items: updatedItems };
-    }));
+    const enrichedOrders = await Promise.all(
+      orders.map(async (order) => {
+        const updatedItems = await Promise.all(
+          order.items.map(async (item) => {
+            if (!item.productName) {
+              const product = await Product.findOne({ id: item.productId });
+              return {
+                ...item,
+                productName: product ? product.name : "Unknown Product",
+              };
+            }
+            return item;
+          })
+        );
+        return { ...order.toObject(), items: updatedItems };
+      })
+    );
 
     res.json(enrichedOrders);
   } catch (err) {
@@ -279,7 +300,7 @@ app.get("/relatedproducts/:id", async (req, res) => {
     const productId = Number(req.params.id);
     const all = await Product.find({});
 
-    const others = all.filter(p => p.id !== productId);
+    const others = all.filter((p) => p.id !== productId);
     const random3 = others.sort(() => 0.5 - Math.random()).slice(0, 3);
 
     res.json(random3);
